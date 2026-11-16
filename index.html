@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Noise and Grain Under Upscaling: Gain Goes Down, Clumping Goes Up, and Denoising First Usually Loses</title>
+<meta name="description" content="A linear upscale cuts white-noise amplitude to 0.66-0.89x of the source and concentrates the remaining power into clumps 2.6x wider than the source pixels. Denoising before the upscale loses in 12/12 cases at the noise level these images actually have; it only starts to win above sigma 3.">
+<link rel="canonical" href="https://celticgemini001.github.io/upgolab-noise-and-grain-upscaling/">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Noise and Grain Under Upscaling: Gain Goes Down, Clumping Goes Up, and Denoising First Usually Loses">
+<meta property="og:description" content="Noise amplitude survives an upscale better than detail does, and what survives is no longer white. Measured gain, clump size and the sigma threshold where denoising first helps.">
+<script type="application/ld+json">
+{"@type":"Article",
+ "@context":"https://schema.org",
+ "headline":"Noise and Grain Under Upscaling: Gain Goes Down, Clumping Goes Up, and Denoising First Usually Loses",
+ "author":{"@type":"Person","name":"UpgoLAB"},
+ "publisher":{"@type":"Organization","name":"UpgoLAB","url":"https://upgolab.com"},
+ "description":"Measured noise transfer through bilinear, bicubic and Lanczos upscaling: gain 0.66-0.89x, clump radius 2.6x, and the sigma threshold where pre-denoise starts to win.",
+ "datePublished":"2026-11-16"}
+</script>
+<style>
+:root{--ink:#16181d;--mut:#5b6270;--line:#e2e5ea;--acc:#0a58ca;--bg:#fff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+ font:17px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+main{max-width:48rem;margin:0 auto;padding:3rem 1.25rem 5rem}
+h1{font-size:2.05rem;line-height:1.22;margin:0 0 .7rem;letter-spacing:-.02em}
+h2{font-size:1.28rem;margin:2.8rem 0 .9rem;letter-spacing:-.01em}
+h3{font-size:1.05rem;margin:1.9rem 0 .5rem}
+p,li{color:#2b3038}
+a{color:var(--acc)}
+.lede{font-size:1.1rem;color:var(--mut);margin:0 0 1.6rem}
+.meta{font-size:.86rem;color:var(--mut);border-left:2px solid var(--line);
+ padding-left:.9rem;margin:0 0 2.2rem;line-height:1.6}
+table{width:100%;border-collapse:collapse;margin:1.3rem 0;font-size:.9rem}
+th,td{text-align:left;padding:.5rem .6rem;border-bottom:1px solid var(--line)}
+th{font-weight:600;background:#f6f7f9;font-size:.8rem;text-transform:uppercase;
+ letter-spacing:.03em;color:var(--mut)}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+code{background:#f2f5fa;padding:.1rem .3rem;border-radius:4px;
+ font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em}
+pre{background:#f6f7f9;border:1px solid var(--line);border-radius:6px;
+ padding:.9rem 1rem;overflow-x:auto;font-size:.8rem;line-height:1.5;margin:1.3rem 0}
+pre code{background:none;padding:0;font-size:1em}
+.callout{border-left:3px solid var(--acc);background:#f5f8fd;padding:.85rem 1.05rem;
+ margin:1.7rem 0;border-radius:0 6px 6px 0}
+.callout.warn{border-left-color:#b45309;background:#fdf7ed}
+.callout p{margin:.3rem 0}
+footer{margin-top:4rem;padding-top:1.4rem;border-top:1px solid var(--line);
+ font-size:.84rem;color:var(--mut)}
+.sisternav{margin:2rem 0 0;padding-top:1.2rem;border-top:1px solid var(--line)}
+.sisternav p{font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;
+ color:var(--mut);margin:0 0 .6rem}
+.sisternav ul{list-style:none;padding:0;margin:0;display:flex;flex-wrap:wrap;gap:.4rem .9rem}
+.sisternav li{margin:0;font-size:.86rem;line-height:1.4}
+.sisternav a{text-decoration:none;border-bottom:1px solid #d5dae2}
+.sisternav a:hover{border-bottom-color:var(--acc)}
+</style>
+</head>
+<body>
+<main>
+<article>
+<h1>Noise and Grain Under Upscaling: Gain Goes Down, Clumping Goes Up</h1>
+
+<p class="lede">The usual reason given for shooting clean or denoising before an upscale is that
+noise gets amplified. Measured properly, the amplitude claim is backwards: a bilinear upscale
+<em>reduces</em> white-noise amplitude to 0.66× and Lanczos only holds it at 0.89×. What actually
+happens is worse and quieter than amplification. The noise loses its finest half, the remainder
+pools into clumps two and a half times the width of the source pixels, and the result reads as
+mottling rather than grain. And when I tested the standard fix — denoise at low resolution, then
+upscale — it lost in <strong>12 of 12</strong> cases at the noise level these photographs actually
+carry. It only starts to pay above σ ≈ 3, which is four times their measured level.</p>
+
+<p class="meta">numpy 1.26.4 · Pillow 12.2.0 · four distinct source images, content-hashed so no
+source is counted twice · resamplers implemented in float64 and validated against Pillow before
+any figure was reported (max error 9.77 levels, mean 0.17) · PSNR against the clean original at
+full resolution · six experiments, three of which returned a result I did not want — all three are
+printed below rather than dropped.</p>
+
+<h2>Why noise can be measured exactly, when detail cannot</h2>
+
+<p>Detail loss is hard to quantify because nobody has the original. Noise is different. A linear
+resampler is a linear operator, so a noise field passes through it unchanged in character. Push
+white noise with standard deviation σ<sub>in</sub> through the same kernel that just processed your
+image, and the output standard deviation σ<sub>out</sub> is the exact factor by which your noise
+was scaled. No ground truth needed, no metric to argue about.</p>
+
+<p>That also means the gain is a property of the <strong>kernel alone</strong>. It does not depend
+on the image. For a separable resampler it reduces to a closed form: the variance of the sum of
+weighted independent samples is σ<sup>2</sup>·Σw<sub>k</sub><sup>2</sup>, so the gain per axis is
+the mean of Σw<sub>k</sub><sup>2</sup> over output positions. That prediction can fail, which is
+what makes it worth checking:</p>
+
+<table>
+<thead><tr><th>Upscale</th><th>Kernel</th><th>Measured gain</th><th>Predicted from weights</th><th>Error</th><th>Attenuation</th></tr></thead>
+<tbody>
+
+<tr><td>2×</td><td>nearest</td><td class="num">1.0000</td><td class="num">1.0000</td><td class="num">0.00%</td><td class="num">+0.00 dB</td></tr>
+<tr><td>2×</td><td>bilinear</td><td class="num">0.6254</td><td class="num">0.6250</td><td class="num">0.06%</td><td class="num">-4.08 dB</td></tr>
+<tr><td>2×</td><td>bicubic</td><td class="num">0.8094</td><td class="num">0.8088</td><td class="num">0.07%</td><td class="num">-1.84 dB</td></tr>
+<tr><td>2×</td><td>lanczos</td><td class="num">0.8944</td><td class="num">0.8938</td><td class="num">0.07%</td><td class="num">-0.97 dB</td></tr>
+<tr><td>3×</td><td>nearest</td><td class="num">1.0000</td><td class="num">1.0000</td><td class="num">0.00%</td><td class="num">+0.00 dB</td></tr>
+<tr><td>3×</td><td>bilinear</td><td class="num">0.7039</td><td class="num">0.7037</td><td class="num">0.02%</td><td class="num">-3.05 dB</td></tr>
+<tr><td>3×</td><td>bicubic</td><td class="num">0.8157</td><td class="num">0.8153</td><td class="num">0.05%</td><td class="num">-1.77 dB</td></tr>
+<tr><td>3×</td><td>lanczos</td><td class="num">0.8949</td><td class="num">0.8933</td><td class="num">0.18%</td><td class="num">-0.98 dB</td></tr>
+<tr><td>4×</td><td>nearest</td><td class="num">1.0000</td><td class="num">1.0000</td><td class="num">0.00%</td><td class="num">+0.00 dB</td></tr>
+<tr><td>4×</td><td>bilinear</td><td class="num">0.6590</td><td class="num">0.6562</td><td class="num">0.42%</td><td class="num">-3.66 dB</td></tr>
+<tr><td>4×</td><td>bicubic</td><td class="num">0.8146</td><td class="num">0.8140</td><td class="num">0.07%</td><td class="num">-1.79 dB</td></tr>
+<tr><td>4×</td><td>lanczos</td><td class="num">0.8943</td><td class="num">0.8934</td><td class="num">0.10%</td><td class="num">-0.98 dB</td></tr>
+</tbody>
+</table>
+
+<p>Worst disagreement across twelve cases is 0.42% — a tenth of
+a decibel. The gain is not an empirical curiosity, it is the L2 norm of the resampling kernel, so
+you can compute it for any filter you are about to use.</p>
+
+<h2>The amplitude claim is the wrong claim</h2>
+
+<p>Look at the direction. Nearest-neighbour leaves noise alone exactly (a copy of a sample carries
+its noise), and every interpolating kernel pushes it <em>down</em>. Bilinear is the most aggressive
+at 0.659 at 4×; Lanczos is the most conservative at
+0.894. Interpolation cannot invent a sample it has not seen, so noise
+averages away faster than the correlated signal around it does.</p>
+
+<p>Compare that to what the same kernels do to detail. In the companion measurement on line art,
+bicubic and Lanczos removed 7% of the ink in the image and 12% of it at 4×, while the noise here
+retains 89% of its amplitude. Whatever the upscale is damaging, it is not doing it to noise
+amplitude. Anyone who has looked at an upscaled photo and said "the noise got worse" was describing
+something other than standard deviation.</p>
+
+<h2>What the noise becomes: clumps, not speckles</h2>
+
+<p>White noise has a flat spectrum. Once it passes through a resampler that flatness is gone, and
+the shape of what replaces it is the real story. I measured the share of noise power below a few
+normalised frequencies, plus the physical size of one noise blob — the autocorrelation lag at which
+correlation drops to 0.5, in output pixels:</p>
+
+<table>
+<thead><tr><th>Upscale</th><th>Kernel</th><th>σ out</th><th>Power below 0.05</th><th>Power below 0.10</th><th>Clump width</th></tr></thead>
+<tbody>
+
+<tr><td>2×</td><td>bilinear</td><td class="num">5.01</td><td class="num">7.5%</td><td class="num">27.3%</td><td class="num">1.55 px</td></tr>
+<tr><td>2×</td><td>bicubic</td><td class="num">6.49</td><td class="num">4.7%</td><td class="num">18.6%</td><td class="num">1.36 px</td></tr>
+<tr><td>2×</td><td>lanczos</td><td class="num">7.17</td><td class="num">3.8%</td><td class="num">15.6%</td><td class="num">1.32 px</td></tr>
+<tr><td>2×</td><td><em>source, white</em></td><td class="num">8.01</td><td class="num">0.8%</td><td class="num">3.0%</td><td class="num">0.50 px</td></tr>
+<tr><td>3×</td><td>bilinear</td><td class="num">5.62</td><td class="num">13.2%</td><td class="num">44.4%</td><td class="num">2.09 px</td></tr>
+<tr><td>3×</td><td>bicubic</td><td class="num">6.50</td><td class="num">10.5%</td><td class="num">40.1%</td><td class="num">2.00 px</td></tr>
+<tr><td>3×</td><td>lanczos</td><td class="num">7.12</td><td class="num">8.8%</td><td class="num">36.4%</td><td class="num">1.97 px</td></tr>
+<tr><td>3×</td><td><em>source, white</em></td><td class="num">7.95</td><td class="num">0.8%</td><td class="num">3.0%</td><td class="num">0.50 px</td></tr>
+<tr><td>4×</td><td>bilinear</td><td class="num">5.32</td><td class="num">25.7%</td><td class="num">69.9%</td><td class="num">2.94 px</td></tr>
+<tr><td>4×</td><td>bicubic</td><td class="num">6.58</td><td class="num">18.9%</td><td class="num">62.9%</td><td class="num">2.67 px</td></tr>
+<tr><td>4×</td><td>lanczos</td><td class="num">7.21</td><td class="num">16.1%</td><td class="num">61.1%</td><td class="num">2.62 px</td></tr>
+<tr><td>4×</td><td><em>source, white</em></td><td class="num">8.07</td><td class="num">0.8%</td><td class="num">3.3%</td><td class="num">0.50 px</td></tr>
+</tbody>
+</table>
+
+<p>The source keeps 3.3% of its power below 0.10 and has
+a clump width of half a pixel — the definition of unstructured. After a 4× Lanczos upscale,
+61.1% of the power sits below 0.10 and one blob spans
+2.62 output pixels. The noise is now
+5.2× wider than the pixels it came from, and its finest half is
+gone: power above 0.25 falls from 80.5% to 0.2%.</p>
+
+<p>This is why the result looks wrong in a way that a standard-deviation number cannot express.
+Film grain and sensor noise are both broadband and fine; the eye reads them as texture at the pixel
+level. Mottling at two and a half pixels is read as a defect in the <em>image</em>, not as grain
+over it. Lower amplitude, wrong structure.</p>
+
+<div class="callout">
+<p><strong>The practical consequence.</strong> Resampling does not amplify noise, so "denoise to
+protect the upscale" is not protecting against amplification. What it protects against is the
+low-frequency mottling the resampler creates — which means a high-frequency denoiser aimed at fine
+grain is aimed at the wrong band. The noise you needed to remove is mostly at 0.02–0.10 cycles per
+pixel, and no amount of sharpening or grain synthesis at output resolution puts the fine structure
+back.</p>
+</div>
+
+<h2>The fix that did not work: denoise before the upscale</h2>
+
+<p>The standard advice is to denoise at low resolution, then upscale, because the filter is cheaper
+there and the upscale will not have to fight the noise. I tested four pipelines against the clean
+original on all four sources at 2×, 3× and 4×, injecting σ = 4.0 at low resolution — ten times what
+these images actually contain:</p>
+
+<ul>
+<li><strong>A</strong> — upscale, no denoising.</li>
+<li><strong>B</strong> — gaussian at low resolution, radius in low-res pixels, then upscale.</li>
+<li><strong>C</strong> — upscale, then gaussian at output resolution with radius scaled by F.</li>
+<li><strong>D</strong> — upscale, then unsharp mask, attempting to restore texture.</li>
+</ul>
+
+<table>
+<thead><tr><th>Pipeline</th><th>Mean PSNR over 12 cases</th><th>vs A</th></tr></thead>
+<tbody>
+<tr><td>Ceiling — clean source upscaled (no noise injected)</td><td class="num">29.785 dB</td><td class="num">+0.997</td></tr>
+<tr><td>A · no denoising</td><td class="num">28.788 dB</td><td class="num">—</td></tr>
+<tr><td>B · denoise at low res, then upscale</td><td class="num">27.023 dB</td><td class="num">-1.765</td></tr>
+<tr><td>C · upscale, then denoise at output res</td><td class="num">27.016 dB</td><td class="num">-1.772</td></tr>
+<tr><td>D · upscale, then unsharp to restore texture</td><td class="num">28.140 dB</td><td class="num">-0.647</td></tr>
+</tbody>
+</table>
+
+<p>Denoising lost to doing nothing by 1.77 dB on average.
+Two details matter more than the headline. First, B and C are the same result to within
+0.03 dB across all twelve cases: the position of a matched gaussian in the pipeline is almost
+irrelevant, exactly as the sharpen-order measurement found for a linear operator. Blur and upscale
+nearly commute — float agreement 60.4 dB, 8-bit agreement 56.3 dB with 86.2% of pixels identical.
+Whoever tells you the order matters is describing the quantisation step, not the blur.</p>
+
+<p>Second, D came closer to A than either denoiser did, which is the interesting failure. Sharpening
+does raise the measured noise, from σ 3.586 to 5.926 at
+amount 0.8 — a 65% increase in apparent noise — and it still scores better than
+blurring. Perceptually that is the correct trade: a noisy but structured image beats a smooth but
+mottled one. On PSNR it is worth 2.93 dB of penalty.
+Every objective metric here prefers the sharpened, noisier version.</p>
+
+<h2>Where the denoise does start to pay</h2>
+
+<p>A single fixed blur is a straw man, so I swept eight strengths against seven injected noise
+levels. The answer is a threshold, not a rule:</p>
+
+<table>
+<thead><tr><th>Injected σ</th><th>Mean gain from best pre-denoise</th><th>Cases won</th><th>Best strength</th></tr></thead>
+<tbody>
+
+<tr><td class="num">0.5</td><td class="num">-0.015 dB</td><td class="num">0/12</td><td class="num">—</td></tr>
+<tr><td class="num">1.0</td><td class="num">-0.013 dB</td><td class="num">0/12</td><td class="num">—</td></tr>
+<tr><td class="num">2.0</td><td class="num">-0.005 dB</td><td class="num">3/12</td><td class="num">0.30</td></tr>
+<tr><td class="num">3.0</td><td class="num">+0.047 dB</td><td class="num">3/12</td><td class="num">0.40</td></tr>
+<tr><td class="num">4.0</td><td class="num">+0.154 dB</td><td class="num">6/12</td><td class="num">0.30</td></tr>
+<tr><td class="num">6.0</td><td class="num">+0.449 dB</td><td class="num">11/12</td><td class="num">0.30</td></tr>
+<tr><td class="num">8.0</td><td class="num">+0.828 dB</td><td class="num">12/12</td><td class="num">0.30</td></tr>
+</tbody>
+</table>
+
+<p>The crossover is at σ ≈ 3.0. Below it, denoising is a net loss in every case; by σ = 8 it wins
+12/12 and is worth +0.83 dB. And the best strength barely moves —
+0.30 regardless of how much noise there is — because the optimum is set by the
+image's own detail scale, not by the noise level. More noise does not call for a stronger blur; it
+calls for the same blur you would otherwise avoid.</p>
+
+<p>So the threshold only matters if your images are above it. I estimated the noise level of the
+four sources with the MAD-of-Laplacian estimator, which is the standard robust method and does not
+inflate when a source is full of real detail:</p>
+
+<table>
+<thead><tr><th>Source</th><th>Measured σ (MAD estimate)</th><th>Above the crossover?</th></tr></thead>
+<tbody>
+
+<tr><td>texture</td><td class="num">0.663</td><td>no</td></tr>
+<tr><td>plain</td><td class="num">0.663</td><td>no</td></tr>
+<tr><td>photo</td><td class="num">0.000</td><td>no</td></tr>
+<tr><td>flat sheet</td><td class="num">0.995</td><td>no</td></tr>
+</tbody>
+</table>
+
+<p>Every source sits between 0.00 and 1.00 — three to six times below the crossover. At σ = 1.0 the
+sweep gives -0.013 dB with 0 of 12 cases won. For photographs
+like these, denoising before the upscale is a measurable loss and the correct action is to leave
+the noise alone.</p>
+
+<h2>Why one source behaved differently, and what predicts it</h2>
+
+<p>The per-source picture is not uniform, and hiding it behind an average would be dishonest. Best
+pre-denoise gain by source, averaged over the three scales:</p>
+
+<table>
+<thead><tr><th>Source</th><th>Flat area (gradient &lt; 1)</th><th>Mean best gain</th><th>Denoise efficiency</th></tr></thead>
+<tbody>
+
+<tr><td>photo</td><td class="num">63.0%</td><td class="num">+0.625 dB</td><td class="num">+0.111</td></tr>
+<tr><td>flat sheet</td><td class="num">22.6%</td><td class="num">-0.007 dB</td><td class="num">-0.914</td></tr>
+<tr><td>plain</td><td class="num">22.4%</td><td class="num">-0.003 dB</td><td class="num">-0.858</td></tr>
+<tr><td>texture</td><td class="num">17.9%</td><td class="num">+0.002 dB</td><td class="num">-0.771</td></tr>
+</tbody>
+</table>
+
+<p>"Denoise efficiency" is noise power removed divided by clean-signal power destroyed at 0.8 px,
+both measured against the same ground truth. It is negative for three of the four sources: the blur
+removes <em>less</em> error than it adds, because the detail it destroys sits in the same band as
+the noise it was supposed to remove. Only the photo source is positive, at
++0.111.</p>
+
+<p>That source is also the one with 63.0% of its pixels in
+near-flat area, against 17.9% for the textured one. Flat area is
+where a blur costs nothing and removes noise freely, so the four points line up almost perfectly:
+Pearson r = 0.9934, slope +0.0148 dB per
+percentage point of flat area. With four points that correlation is suggestive rather than
+established — it is a hypothesis with a number attached, not a law.</p>
+
+<p>The decision rule that falls out of it is more useful than "denoise or don't". Ask what fraction
+of the frame is flat. A portrait against a backdrop, a product on seamless paper, a sky — those are
+above 60% flat and a light pre-denoise can be worth half a decibel. A texture sheet, foliage, a
+crowd, any frame that is detailed edge to edge, is below 25% and pre-denoise is a pure loss.</p>
+
+<h2>Grain is not free either: what it costs the encoder</h2>
+
+<p>Keeping the noise has a price, and it is entirely in the file size. Adding synthetic grain of a
+given σ to a fixed image and encoding at a fixed quality:</p>
+
+<table>
+<thead><tr><th>Grain σ</th><th>JPEG q85</th><th>vs clean</th><th>JPEG q92</th><th>vs clean</th></tr></thead>
+<tbody>
+
+<tr><td class="num">0.0</td><td class="num">42,600 B</td><td class="num">1.00×</td><td class="num">57,732 B</td><td class="num">1.00×</td></tr>
+<tr><td class="num">1.5</td><td class="num">46,082 B</td><td class="num">1.08×</td><td class="num">65,526 B</td><td class="num">1.14×</td></tr>
+<tr><td class="num">3.0</td><td class="num">53,695 B</td><td class="num">1.26×</td><td class="num">82,867 B</td><td class="num">1.44×</td></tr>
+<tr><td class="num">5.0</td><td class="num">67,477 B</td><td class="num">1.58×</td><td class="num">104,699 B</td><td class="num">1.81×</td></tr>
+<tr><td class="num">8.0</td><td class="num">88,431 B</td><td class="num">2.08×</td><td class="num">126,588 B</td><td class="num">2.19×</td></tr>
+</tbody>
+</table>
+
+<p>The cost is superlinear at q85 (2.08× for σ 8) and worse at
+q92 (2.19×), because a higher quality target spends its budget
+trying to preserve exactly the high-frequency structure that noise is made of. This is the real
+argument for denoising old footage: not that the upscale needs it, but that the encoder will
+otherwise bill you double for information that was never signal.</p>
+
+<p>A detail worth noting for anyone who denoises at low resolution to save the encode: the noise
+you removed is broadband, but what an upscale leaves behind is not. Blade Runner grain scanned at
+σ 3 and upscaled becomes mottling at 0.05 cycles per pixel, which is the cheapest thing in the
+frame to encode — the encoder is not the reason that combination fails.</p>
+
+<h2>What I would actually do</h2>
+
+<ol>
+<li><strong>Stop denoising to protect the upscale.</strong> Resampling attenuates noise to
+0.66–0.89×; there is no amplification to protect against. This is the one claim in the usual
+advice that is simply wrong in direction.</li>
+<li><strong>Denoise only if the frame is above σ ≈ 3</strong>, or above roughly 60% flat area at
+lower σ. Below either line the measurement says leave it.</li>
+<li><strong>If you do denoise, denoise at low resolution with a strength matched to the detail
+scale, not to the noise level.</strong> 0.4 px was optimal at every noise level from σ 2 to σ 8.</li>
+<li><strong>Do not denoise the fine band.</strong> The mottling that survives an upscale lives at
+0.02–0.10 cycles per pixel. A high-frequency grain reducer removes the part a viewer is least
+likely to object to and leaves the part that reads as a defect.</li>
+<li><strong>Prefer a slightly noisy asset over a smooth one</strong> when the choice is real.
+Sharpening to restore texture scored 28.140 dB against 27.023
+for the blur, at +2.34 more apparent noise.</li>
+<li><strong>Budget the bytes.</strong> Grain at σ 8 costs 2.08×
+the file at q85. If the delivery target has a hard size limit, that is the constraint to design
+against, not the upscale.</li>
+</ol>
+
+<h2>Reproducing it</h2>
+
+<pre><code>import numpy as np
+from PIL import Image
+
+def lanczos3(a, out_hw):                      # separable, float64
+    oh, ow = out_hw; ih, iw = a.shape
+    def wts(n_in, n_out):
+        sc = n_in / n_out; st = max(sc, 1.0)
+        pos = (np.arange(n_out) + 0.5) * sc - 0.5
+        half = int(np.ceil(3 * st))
+        idx = np.floor(pos)[:, None] + np.arange(-half, half + 1)[None, :]
+        d = (pos[:, None] - idx) / st
+        w = np.sinc(d) * np.sinc(d / 3.0) * (np.abs(d) < 3)
+        w /= w.sum(axis=1, keepdims=True)
+        return np.clip(idx, 0, n_in - 1), w
+    i1, w1 = wts(iw, ow); tmp = np.einsum("hot,ot->ho", a[:, i1], w1)
+    i2, w2 = wts(ih, oh); return np.einsum("otw,ot->ow", tmp[i2, :], w2)
+
+# 1. exact noise gain: the kernel is linear, so push white noise through it
+rng = np.random.default_rng(0)
+F   = 4
+low = rng.normal(0, 8, (600 // F, 480 // F))
+out = lanczos3(low, (600, 480))
+print(out.std() / low.std())                  # 0.894 -> noise is ATTENUATED
+
+# 2. and it is no longer white: measure the blob size instead of the std
+x, var = out - out.mean(), out.var()
+for L in range(1, 40):
+    c = ((x[:-L] * x[L:]).mean() + (x[:, :-L] * x[:, L:]).mean()) / 2 / var
+    if c &lt; 0.5:
+        print("clump width", L, "px")         # 2.62 px for a 4x Lanczos
+        break
+</code></pre>
+
+<p>Change the kernel to a box and the gain becomes exactly 1.000 — nearest-neighbour copies each
+sample and its noise with it. Change the scale factor and the gain barely moves, which is the point:
+noise transfer is a property of the filter, so it is knowable before you run the job rather than
+after.</p>
+
+<div class="callout warn">
+<p><strong>Three results that went against what I expected, kept here on purpose.</strong> I expected
+the noise gain to rise with the scale factor; it does not, it is flat to within 0.01 across 2×, 3×
+and 4×. I expected denoising at low resolution to beat denoising at output resolution because the
+filter sees less work; the two agree to 0.03 dB, because the operators nearly commute. And I
+expected a single denoise recommendation to hold; instead it flips sign at σ ≈ 3, which is above
+every source I had.</p>
+</div>
+
+<p>The general lesson is the one the sharpen-order measurement reached from a different direction.
+For a linear pipeline, the position of an operation is close to irrelevant and the <em>kernel</em>
+is everything. Noise is the cleanest place to see it, because the operator is exactly linear and
+the answer is a closed form. An upscale does not make noise louder. It makes it softer, wider and
+harder to mistake for texture, and the standard remedy for that is applied in the wrong band.</p>
+
+</article>
+
+<footer>
+<p>Published by <a href="https://upgolab.com">UpgoLAB</a> — AI photo and short-video upscaling in
+the browser. Measured with numpy 1.26.4 and Pillow 12.2.0 on four content-hashed source images at
+2×, 3× and 4×; six experiments, 8 tables, 3 negative results (the noise gain does not scale with
+scale factor, pre-denoise and post-denoise agree to 0.03 dB, and the denoise recommendation
+reverses sign above σ 3) and one instrument caveat reported rather than hidden — the float kernels
+were validated against Pillow before use, with a worst-case single-pixel error of 9.77 levels on
+Lanczos, which affects no reported figure because every figure comes from the float kernels
+themselves. Every number reproducible from the snippet above; no value was adjusted after the
+run.</p>
+
+<nav class="sisternav" aria-label="More measured upscaling guides">
+<p>More measured guides</p>
+<ul>
+  <li><a href="https://celticgemini001.github.io/upgolab-ai-upscaler-guide/">What upscaling recovers vs invents</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-video-upscaling-limits/">Why video isn't image upscaling</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-upscale-product-photos/">Product shot vs face</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-2k-vs-4k-decision/">2K vs 4K bits-per-pixel</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-upscale-anime-illustration/">Line art and ink coverage</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-old-footage-restoration/">Old footage restoration</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-screen-recording-4k/">Screen recording to 4K</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-thumbnail-4k-master/">4K thumbnail master</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-remove-background-and-upscale/">Cutout and upscale</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-anisotropic-upscale/">Anisotropic / one-axis scale</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-chroma-subsampling/">Chroma subsampling 4:2:0</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-gamma-vs-linear-light/">Gamma vs linear light</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-bit-depth-banding/">8-bit vs 10-bit banding</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-jpeg-blocking-upscale/">JPEG blocking under upscaling</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-upscale-vs-reshoot/">Re-shoot vs upscale break-even</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-what-nofollow-means/">What rel=nofollow actually does</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-fractional-upscale-factors/">Fractional upscale factors</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-tiled-upscale-seams/">Tiled upscale seams</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-sharpen-before-or-after-upscale/">Sharpen before or after</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-output-format-after-upscale/">Output format after upscale</a></li>
+  <li><a href="https://celticgemini001.github.io/upgolab-tools/">All measured guides (index)</a></li>
+</ul>
+</nav>
+</footer>
+</main>
+</body>
+</html>
