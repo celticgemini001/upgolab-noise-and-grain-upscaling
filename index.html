@@ -162,12 +162,12 @@ a clump width of half a pixel — the definition of unstructured. After a 4× La
 gone: power above 0.25 falls from 80.5% to 0.2%.</p>
 
 <p>This is why the result looks wrong in a way that a standard-deviation number cannot express.
-Film grain and sensor noise are both broadband and fine; the eye reads them as texture at the pixel
+Film <a href="https://celticgemini001.github.io/upgolab-bit-depth-banding/">grain</a> and sensor noise are both broadband and fine; the eye reads them as texture at the pixel
 level. Mottling at two and a half pixels is read as a defect in the <em>image</em>, not as grain
 over it. Lower amplitude, wrong structure.</p>
 
 <div class="callout">
-<p><strong>The practical consequence.</strong> Resampling does not amplify noise, so "denoise to
+<p><strong>The practical consequence.</strong> Resampling does not amplify noise, so "<a href="https://celticgemini001.github.io/upgolab-old-footage-restoration/">denoise</a> to
 protect the upscale" is not protecting against amplification. What it protects against is the
 low-frequency mottling the resampler creates — which means a high-frequency denoiser aimed at fine
 grain is aimed at the wrong band. The noise you needed to remove is mostly at 0.02–0.10 cycles per
@@ -398,7 +398,6 @@ the answer is a closed form. An upscale does not make noise louder. It makes it 
 harder to mistake for texture, and the standard remedy for that is applied in the wrong band.</p>
 
 </article>
-
 <footer>
 <p>Published by <a href="https://upgolab.com">UpgoLAB</a> — AI photo and short-video upscaling in
 the browser. Measured with numpy 1.26.4 and Pillow 12.2.0 on four content-hashed source images at
