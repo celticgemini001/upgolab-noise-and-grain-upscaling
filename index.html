@@ -4,18 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Noise and Grain Under Upscaling: Gain Goes Down, Clumping Goes Up, and Denoising First Usually Loses</title>
-<meta name="description" content="A linear upscale cuts white-noise amplitude to 0.66-0.89x of the source and concentrates the remaining power into clumps 2.6x wider than the source pixels. Denoising before the upscale loses in 12/12 cases at the noise level these images actually have; it only starts to win above sigma 3.">
+<meta name="description" content="A linear upscale cuts white-noise amplitude to 0.66-0.89x and concentrates the rest into clumps 2.6x wider than the source pixels. Pre-denoise loses 12/12 at the noise these images carry. In 4:2:0 the 2x2 chroma box cuts chroma noise to 0.31x, stops working after interpolation, and tolerates a radius that costs luma 6.3 dB.">
 <link rel="canonical" href="https://celticgemini001.github.io/upgolab-noise-and-grain-upscaling/">
 <meta property="og:type" content="article">
 <meta property="og:title" content="Noise and Grain Under Upscaling: Gain Goes Down, Clumping Goes Up, and Denoising First Usually Loses">
-<meta property="og:description" content="Noise amplitude survives an upscale better than detail does, and what survives is no longer white. Measured gain, clump size and the sigma threshold where denoising first helps.">
+<meta property="og:description" content="Noise amplitude survives an upscale better than detail does, and what survives is no longer white. Measured gain, clump size, the sigma threshold where denoising first helps, and why 4:2:0 chroma behaves differently.">
 <script type="application/ld+json">
 {"@type":"Article",
  "@context":"https://schema.org",
  "headline":"Noise and Grain Under Upscaling: Gain Goes Down, Clumping Goes Up, and Denoising First Usually Loses",
  "author":{"@type":"Person","name":"UpgoLAB"},
  "publisher":{"@type":"Organization","name":"UpgoLAB","url":"https://upgolab.com"},
- "description":"Measured noise transfer through bilinear, bicubic and Lanczos upscaling: gain 0.66-0.89x, clump radius 2.6x, and the sigma threshold where pre-denoise starts to win.",
+ "description":"Measured noise transfer through bilinear, bicubic and Lanczos upscaling: gain 0.66-0.89x, clump radius 2.6x, the sigma threshold where pre-denoise starts to win, and the 4:2:0 chroma box measured separately.",
  "datePublished":"2026-11-16"}
 </script>
 <style>
@@ -70,6 +70,14 @@ pools into clumps two and a half times the width of the source pixels, and the r
 mottling rather than grain. And when I tested the standard fix — denoise at low resolution, then
 upscale — it lost in <strong>12 of 12</strong> cases at the noise level these photographs actually
 carry. It only starts to pay above σ ≈ 3, which is four times their measured level.</p>
+
+<p class="lede">Then I checked whether any of that applies to a real file, which is 4:2:0 and not
+grayscale. It does not. The 2×2 chroma average is an extra linear operator that cuts chroma noise to
+<strong>0.31×</strong> before the upscale, and because it runs on independent samples it stops working
+once the image has been interpolated — point the same box at a 4× upscale and it returns 0.957,
+removing 4.3% of the amplitude instead of 50%. Chroma also tolerates a denoise radius that costs
+luma 6.34 dB. The luma
+conclusions above hold; they were measured on the wrong plane.</p>
 
 <p class="meta">numpy 1.26.4 · Pillow 12.2.0 · four distinct source images, content-hashed so no
 source is counted twice · resamplers implemented in float64 and validated against Pillow before
@@ -321,6 +329,310 @@ you removed is broadband, but what an upscale leaves behind is not. Blade Runner
 σ 3 and upscaled becomes mottling at 0.05 cycles per pixel, which is the cheapest thing in the
 frame to encode — the encoder is not the reason that combination fails.</p>
 
+<h2 id="chroma-420">The noise I measured was luma. Your file is 4:2:0.</h2>
+
+<p>Everything above treats noise as one number, measured on a grayscale plane. Almost no photograph
+you will ever upscale is stored that way. It is stored as 4:2:0: full-resolution luma, and Cb/Cr
+averaged over 2×2 blocks. That averaging is not a compression setting you can set aside — it is a
+linear operator sitting in front of your upscale, with its own noise gain, its own blob size and its
+own best denoise radius. I measured all three on the same three sources, and the luma numbers do not
+transfer.</p>
+
+<h3>Per-plane gain is identical in 4:4:4, and that is the point</h3>
+
+<p>First the null result, because it is what makes the rest trustworthy. Push the same white-noise
+field through the resampler in RGB, convert the difference to YCbCr, and compare each plane's output
+sigma to that plane's own input sigma. Y and chroma gain agree to within 0.001 on all three sources,
+at both factors, for all three kernels:</p>
+
+<table>
+<thead><tr><th>Upscale</th><th>Kernel</th><th class="num">Y gain</th><th class="num">Cb/Cr gain (RMS)</th><th class="num">Predicted Σw²</th><th class="num">Y vs prediction</th></tr></thead>
+<tbody>
+<tr><td>2×</td><td>nearest</td><td class="num">1.0000</td><td class="num">1.0000</td><td class="num">1.0000</td><td class="num">0.00%</td></tr>
+<tr><td>2×</td><td>bilinear</td><td class="num">0.6257</td><td class="num">0.6254</td><td class="num">0.6250</td><td class="num">+0.11%</td></tr>
+<tr><td>2×</td><td>lanczos</td><td class="num">0.8942</td><td class="num">0.8938</td><td class="num">0.8938</td><td class="num">+0.04%</td></tr>
+<tr><td>4×</td><td>nearest</td><td class="num">1.0000</td><td class="num">1.0000</td><td class="num">1.0000</td><td class="num">0.00%</td></tr>
+<tr><td>4×</td><td>bilinear</td><td class="num">0.6569</td><td class="num">0.6567</td><td class="num">0.6562</td><td class="num">+0.10%</td></tr>
+<tr><td>4×</td><td>lanczos</td><td class="num">0.8934</td><td class="num">0.8935</td><td class="num">0.8934</td><td class="num">+0.00%</td></tr>
+</tbody>
+</table>
+
+<p>Worst disagreement with the closed form across 18 cases (three sources × two factors × three
+kernels) is 0.148%. That is a check on my instrument, not a finding: a resampler applied per plane
+cannot treat Cb differently from Y, because both are the same linear operator on a different input.
+So every difference that shows up in chroma has to come from the box filter, and the box filter is
+the next section.</p>
+
+<h3>4:2:0 costs chroma a flat 0.315 — but only if the box sits on the source</h3>
+
+<p>The box can go in two places: on the source, which is what a 4:2:0 file already did to you before
+you opened it, or on the output, which is what an encoder does when it stores your result as 4:2:0.
+They are not the same measurement and they behave in opposite directions:</p>
+
+<table>
+<thead><tr><th>Where the 2×2 box sits</th><th class="num">Y gain</th><th class="num">Cb/Cr, photo</th><th class="num">square</th><th class="num">texture</th></tr></thead>
+<tbody>
+<tr><td>no box — 4:4:4 throughout</td><td class="num">0.8942</td><td class="num">0.8938</td><td class="num">0.8946</td><td class="num">0.8942</td></tr>
+<tr><td>box at source, native resolution</td><td class="num">1.0000</td><td class="num">0.3134</td><td class="num">0.3144</td><td class="num">0.3141</td></tr>
+<tr><td>box at source, then 2× lanczos</td><td class="num">0.8942</td><td class="num">0.3151</td><td class="num">0.3161</td><td class="num">0.3158</td></tr>
+<tr><td>box at source, then 4× lanczos</td><td class="num">0.8937</td><td class="num">0.3150</td><td class="num">0.3161</td><td class="num">0.3157</td></tr>
+<tr><td>2× lanczos, then box at output</td><td class="num">0.8942</td><td class="num">0.5500</td><td class="num">0.5512</td><td class="num">0.5507</td></tr>
+<tr><td>4× lanczos, then box at output</td><td class="num">0.8937</td><td class="num">0.7581</td><td class="num">0.7592</td><td class="num">0.7587</td></tr>
+</tbody>
+</table>
+
+<p>A prediction first. A 2×2 box on white noise gives 0.500 on its own (measured 0.4998), and the
+bilinear rebuild at the <em>same</em> resolution is a 2× scale by that kernel's factor, 0.6250:
+0.500 × 0.6250 = 0.3125 against a measured 0.3134, off by 0.3%. That checks the instrument.</p>
+
+<p>Then the result that does not follow from anything above. Box at source followed by 2× and 4×
+Lanczos gives 0.3151 and 0.3150 — statistically identical to the case with no upscale at all, 0.3134.
+If the two operators were independent the number would have <em>risen</em> by 43%: the box contributes
+0.500, the 2-D Lanczos gain is 0.8938, and 0.500 × 0.8938 = 0.4469, against the 0.3151 measured. It
+does not rise at all. The box already removed everything above half-Nyquist from the chroma plane, so
+there is nothing left for a sharper kernel to re-amplify — the two are not independent, and the
+second is close to a no-op on what the first left behind.</p>
+
+<p>The residual 0.3151 vs 0.3134 is a 0.5% difference and I would not defend it as anything but
+noise in the estimator. What I will defend is the gap to 0.4469, which is 42% and is the size of the
+effect the independence assumption predicts.</p>
+
+<p>Put the box on the output side and the direction reverses: 0.3134 → 0.5500 at 2× → 0.7581 at 4×.
+Stored as 4:2:0 <em>after</em> a 4× upscale, chroma keeps three quarters of its noise. Same box, same
+data, opposite outcome, purely from where in the pipeline it sits.</p>
+
+<h3>Why the box stops working after an upscale</h3>
+
+<p>A 2×2 average removes noise only if neighbouring samples are independent. Upscaling makes them not
+independent — that is what interpolation is. Measure the lag-1 correlation of the noise field and the
+box gain falls out of it:</p>
+
+<table>
+<thead><tr><th>Noise field</th><th class="num">lag-1 corr.</th><th class="num">2×2 box gain</th><th class="num">upscale gain</th><th class="num">combined</th></tr></thead>
+<tbody>
+<tr><td>white, not upscaled</td><td class="num">0.000</td><td class="num">0.4998</td><td class="num">1.000</td><td class="num">0.500</td></tr>
+<tr><td>after 2× bilinear</td><td class="num">0.750</td><td class="num">0.9500</td><td class="num">0.626</td><td class="num">0.594</td></tr>
+<tr><td>after 2× lanczos</td><td class="num">0.684</td><td class="num">0.9034</td><td class="num">0.894</td><td class="num">0.807</td></tr>
+<tr><td>after 4× bilinear</td><td class="num">0.923</td><td class="num">0.9525</td><td class="num">0.657</td><td class="num">0.626</td></tr>
+<tr><td>after 4× lanczos</td><td class="num">0.914</td><td class="num">0.9571</td><td class="num">0.893</td><td class="num">0.855</td></tr>
+</tbody>
+</table>
+
+<p>A 4× Lanczos noise field has lag-1 correlation 0.914, so a 2×2 box over it returns 0.957 of the
+amplitude — it averages four values the interpolator already made nearly equal. Subsample a 4×
+upscale to 4:2:0 and you have removed 4.3% of the noise. Subsample the source and you halve it.</p>
+
+<p>This is the one place on this page where pipeline order matters. Blur and upscale nearly commute
+for a matched gaussian; a decimation does not commute with an interpolation, because the decimation
+is destructive only while the samples are still independent. Encoders exploit that without saying so:
+when a codec stores 4:2:0 it discards chroma noise at the one point in the pipeline where the discard
+is nearly free.</p>
+
+<h3>What chroma noise becomes is wider than what luma noise becomes</h3>
+
+<p>The luma blotch measurement above gives a clump half-width of 2.62 output pixels after a 4×
+Lanczos. Chroma under 4:2:0 is worse, because the box adds a second, coarser stage:</p>
+
+<table>
+<thead><tr><th>Plane</th><th class="num">σ out</th><th class="num">clump half-width</th><th class="num">power &lt;0.05</th><th class="num">power &lt;0.10</th></tr></thead>
+<tbody>
+<tr><td>Y, 4:4:4</td><td class="num">3.585</td><td class="num">2.62 px</td><td class="num">15.8%</td><td class="num">61.9%</td></tr>
+<tr><td>Cb, 4:4:4</td><td class="num">3.342</td><td class="num">2.62 px</td><td class="num">15.9%</td><td class="num">61.6%</td></tr>
+<tr><td>Cb, 4:2:0</td><td class="num">2.835</td><td class="num">2.89 px</td><td class="num">21.1%</td><td class="num">71.0%</td></tr>
+<tr><td>Cr, 4:2:0</td><td class="num">2.991</td><td class="num">2.89 px</td><td class="num">20.9%</td><td class="num">71.0%</td></tr>
+</tbody>
+</table>
+
+<p>Lower amplitude, worse structure: 71.0% of the chroma noise power sits below 0.10 cycles per
+pixel, against 61.9% for luma. Colour mottling is broader than luma mottling at the same nominal
+noise level, which matches what eyes report — colour blotches stay visible at a distance where luma
+grain has already dissolved into texture.</p>
+
+<h3>The denoise crossover differs between the planes by more than the whole luma effect</h3>
+
+<p>The page above concluded that pre-denoise only pays above σ ≈ 3 and that the optimal strength
+does not move with the noise level. Both statements are about luma. Run the same sweep on the same
+crop, blurring each plane separately at radius <em>r</em> in output pixels at 2×, and at σ 1.0 the
+radius that gains chroma 1.12 dB costs luma 6.34 dB — the same operation, on the same pixels,
+scoring with opposite signs:</p>
+
+<table>
+<thead><tr><th>Injected σ</th><th class="num">Y best gain</th><th class="num">at radius</th><th class="num">Chroma best gain</th><th class="num">at radius</th><th class="num">Y at chroma's best radius</th></tr></thead>
+<tbody>
+<tr><td>1.0</td><td class="num">+0.000</td><td class="num">0.0 px</td><td class="num">+1.122</td><td class="num">0.8 px</td><td class="num">−6.340</td></tr>
+<tr><td>3.0</td><td class="num">+0.085</td><td class="num">0.4 px</td><td class="num">+2.341</td><td class="num">1.6 px</td><td class="num">−4.774</td></tr>
+<tr><td>6.0</td><td class="num">+0.213</td><td class="num">0.8 px</td><td class="num">+2.841</td><td class="num">2.0 px</td><td class="num">−2.203</td></tr>
+</tbody>
+</table>
+
+<p>At σ 1.0 the radius that gains chroma 1.12 dB costs luma 6.34 dB. Same pixels, same noise field,
+one plane nearly untouched and the other worth a stop. Chroma's optimum also moves with the noise
+level — 0.8 px at σ 1, 1.6 at σ 3, 2.0 at σ 6 — so the rule from above, that optimum strength is set
+by the detail scale and not the noise level, does not carry over to chroma. At 2× output scale chroma
+wants 2.5–4× the luma radius.</p>
+
+<p>The mechanism is not mysterious once you measure the clean signal's own energy. On this crop the
+clean AC detail RMS is 74.9 levels in Y and 7.6 in Cb — Cb carries 10.1% of the luma detail, and
+sensor noise does not respect that ratio. Inject the same sigma into both and chroma's
+signal-to-noise ratio starts 13.4× worse, constant across the sweep because both planes see the same
+noise: 125.2 in Y against 9.3 in chroma at σ 1.0, 62.7 against 4.7 at σ 2.0. Chroma noise is not more
+visible because it is stronger; it is that chroma <em>detail</em> is small enough that almost any blur
+costs less than the noise it removes.</p>
+
+<h3>Two controls, because the gain looked too easy</h3>
+
+<p><strong>Is it an artefact of RGB PSNR weighting?</strong> Partly, so I stopped using RGB PSNR for
+it. Control on the clean image: replacing all chroma with zero scores 23.795 dB, replacing luma with
+mid-grey scores 10.351 dB — chroma carries real weight, but RGB PSNR is not a chroma metric. The
+right metric is the RMS magnitude of the (Cb,Cr) error vector. On that metric, at σ 6.0 with
+chroma-only blur, the raw chroma error left in the output goes 100% → 95.0% → 69.6% → 52.8% → 42.9%
+→ 38.5% at radii 0, 0.4, 0.8, 1.2, 1.6, 2.0 — a 2.60× reduction in actual level units, from 4.767
+to 1.836. At r = 3.0 it starts back up, 41.2%, because the blur has begun removing real chroma.</p>
+
+<p><strong>Could a wrong-plane blur fake the same number?</strong> Blurring luma at the same radii
+leaves chroma error at 100.0, 100.0, 100.0, 100.0, 100.0% on the σ 1.0 frame and 100.0, 100.0, 99.9,
+99.8, 99.8% on the σ 6.0 one — flat to three digits — while the RGB PSNR on the σ 1.0 frame falls
+from 48.856 to 31.127 dB at r = 3, a 17.7 dB penalty. The metric is isolated the way I claim: a
+wrong-plane blur cannot move it, and costs the image enormously. That is also the practical reason
+to test the planes separately rather than sweeping one global strength — a single radius applied to
+both planes is simultaneously a 1.12 dB win and a 6.34 dB loss.</p>
+
+<h3>An honest disagreement with the chroma page in this cluster</h3>
+
+<p>The <a href="https://celticgemini001.github.io/upgolab-chroma-subsampling/">chroma subsampling
+measurement</a> reports bilinear as the best kernel for rebuilding 4:2:0 chroma, 0.447 dB ahead of
+Lanczos, explained as a band-limited signal that a sharpening kernel cannot improve. I tried to
+reproduce it and could not. On a synthetic 4:4:4 ground truth the full round trip with no upscale
+gives Lanczos 4.82 dB ahead of bilinear on the same photograph (58.19 vs 53.37 PSNR-C). Put the 2×
+upscale back in and the gap widens to 6.09 dB. Lanczos won all six synthetic-reference comparisons
+across two pipelines and three sources.</p>
+
+<p>The variable that decides it is not the kernel, it is what counts as ground truth:</p>
+
+<table>
+<thead><tr><th>Ground truth</th><th>Source</th><th class="num">nearest</th><th class="num">bilinear</th><th class="num">bicubic</th><th class="num">lanczos</th><th class="num">spread</th></tr></thead>
+<tbody>
+<tr><td rowspan="3">synthetic 4:4:4</td><td>photo</td><td class="num">50.71</td><td class="num">53.37</td><td class="num">57.40</td><td class="num"><strong>58.19</strong></td><td class="num">7.48 dB</td></tr>
+<tr><td>square</td><td class="num">49.06</td><td class="num">51.52</td><td class="num">54.62</td><td class="num"><strong>55.53</strong></td><td class="num">6.47 dB</td></tr>
+<tr><td>texture</td><td class="num">65.73</td><td class="num">69.93</td><td class="num">77.44</td><td class="num"><strong>82.61</strong></td><td class="num">16.87 dB</td></tr>
+<tr><td rowspan="2">real JPEG q92, 4:2:0</td><td>photo</td><td class="num">52.22</td><td class="num">55.26</td><td class="num">58.85</td><td class="num"><strong>59.18</strong></td><td class="num">6.96 dB</td></tr>
+<tr><td>texture</td><td class="num"><strong>71.90</strong></td><td class="num">63.82</td><td class="num">65.19</td><td class="num">64.33</td><td class="num">8.09 dB</td></tr>
+</tbody>
+</table>
+
+<p>Spread across four kernels is 6.5–16.9 dB, and the ordering flips between the two ground-truth
+conditions. On a real encoded texture nearest-neighbour beats Lanczos by 7.57 dB, because there is no
+high-frequency chroma left to reconstruct and the sharpening kernels only add ringing where the
+reference has flat blocks. The sister page's −0.447 dB and my +4.82 dB are both smaller than the
+spread and both are reporting which reference they had. What I can state after trying to break my own
+result: the kernel choice is worth a lot more than 0.45 dB, and which kernel wins depends on whether
+your reference contains chroma detail above the box cutoff. Compared against the original file it
+does not; compared against a synthetic 4:4:4 original it does.</p>
+
+<div class="callout warn">
+<p><strong>A metric bug I shipped and then found.</strong> My first pass reported chroma gain as
+<code>np.hypot(dCb, dCr).std() / np.hypot(sCb, sCr)</code> and produced 0.46 where the truth is 1.00.
+The standard deviation of <code>hypot</code> over two independent planes is about 0.66 of their RMS
+magnitude, not the RMS itself, so the metric flatters whoever is being measured. The correct
+combination is <code>sqrt(mean(Cb² + Cr²))</code>. Every chroma number on this page was recomputed
+after the fix; on the same data the two methods differ by up to 54%. I kept the bug in the page
+because it is exactly the class of error that survives review — the wrong number looks like a finding
+rather than a mistake.</p>
+</div>
+
+<h3>Reproducing the chroma numbers</h3>
+
+<pre><code>import numpy as np
+
+def kern(n_in, n_out, kind):             # separable weights, float64
+    sc = n_in / n_out; st = max(sc, 1.0)
+    pos = (np.arange(n_out) + 0.5) * sc - 0.5
+    half = int(np.ceil({'lin': 1, 'lan': 3}[kind] * st))
+    j = np.arange(-half, half + 1)[None, :]
+    idx = np.clip((np.floor(pos)[:, None] + j).astype(int), 0, n_in - 1)
+    d = np.abs((pos[:, None] - (np.floor(pos)[:, None] + j)) / st)
+    w = np.clip(1 - d, 0, None) if kind == 'lin' else np.where(d &lt; 3, np.sinc(d)*np.sinc(d/3), 0)
+    return idx, w / w.sum(1, keepdims=True)
+
+def resize(a, oh, ow, kind='lan'):
+    if a.ndim == 2:
+        i, w = kern(a.shape[1], ow, kind)
+        t = np.einsum('hwk,wk-&gt;hw', a[:, i], w)
+        i, w = kern(a.shape[0], oh, kind)
+        return np.einsum('ok,okw-&gt;ow', w, t[i])
+    return np.stack([resize(a[..., c], oh, ow, kind) for c in range(a.shape[2])], -1)
+
+def ycc(a):
+    R, G, B = a[..., 0], a[..., 1], a[..., 2]
+    return np.stack([.299*R+.587*G+.114*B, -.169*R-.331*G+.5*B, .5*R-.419*G-.081*B], -1)
+
+def rgb(a):
+    Y, Cb, Cr = a[..., 0], a[..., 1], a[..., 2]
+    return np.stack([Y+1.402*Cr, Y-.344*Cb-.714*Cr, Y+1.772*Cb], -1)
+
+def to420(a):                            # box chroma at source res, bilinear back up
+    y = ycc(a); h, w = y.shape[:2]; h2, w2 = h//2*2, w//2*2
+    out = [y[..., 0]]
+    for i in (1, 2):
+        s = y[..., i][:h2, :w2].reshape(h2//2, 2, w2//2, 2).mean((1, 3))
+        out.append(resize(s, h2, w2, 'lin'))
+    return rgb(np.stack(out, -1))
+
+def chroma_rms(d):                       # RMS over the (Cb,Cr) pair -- NOT std of a hypot
+    return float(np.sqrt((d[..., 1]**2 + d[..., 2]**2).mean()))
+
+rng = np.random.default_rng(1)
+yy, xx = np.mgrid[0:240, 0:320]
+img = np.clip(128 + 40*np.sin(xx/5.0) + 30*np.cos(yy/3.0), 0, 255)[..., None].repeat(3, 2)
+noise = rng.normal(0, 6, img.shape)
+sig = [float(ycc(noise)[..., i].std()) for i in range(3)]
+cin = float(np.hypot(sig[1], sig[2]))
+
+for F in (1, 2, 4):                      # prints 0.317, 0.554, 0.761
+    up = (lambda x: x) if F == 1 else (lambda x: resize(x, 240*F, 320*F, 'lan'))
+    e = ycc(to420(up(img+noise)) - to420(up(img)))
+    print(f"F={F}  420  Y {e[...,0].std()/sig[0]:.3f}  C {chroma_rms(e)/cin:.3f}")
+
+clean = resize(img, 480, 640, 'lan')     # blur chroma only, watch the raw error fall
+for s in (3.0, 6.0):
+    base = np.clip(resize(np.clip(img + rng.normal(0, s, img.shape), 0, 255), 480, 640, 'lan'), 0, 255)
+    e0 = chroma_rms(ycc(base - clean))
+    for r in (0.4, 0.8, 1.6):
+        k = np.exp(-0.5*(np.arange(-9, 10)/r)**2); k /= k.sum()
+        z = ycc(base)
+        for i in (1, 2):
+            z[..., i] = np.stack([np.convolve(np.convolve(p, k, 'same'), k, 'same') for p in z[..., i]])
+        e1 = chroma_rms(ycc(np.clip(rgb(z), 0, 255) - clean))
+        print(f"sigma {s} r={r}: {e0:.3f} -&gt; {e1:.3f} levels ({e1/e0*100:.0f}% left)")
+</code></pre>
+
+<p>Run it and the chroma gain prints 0.317, 0.554, 0.761 for F = 1, 2, 4 — the same rising curve as
+the photo table, from a fixture with no photograph in it. The error falls to 95%, 73% and 53% of its
+unblurred value at radii 0.4, 0.8 and 1.6, against 95%, 70% and 43% on the real photograph. The exact
+percentages are fixture-dependent; the shape is the result.</p>
+
+<h3 id="chroma-what-to-do">What changes in the recommendations above</h3>
+
+<ul>
+<li><strong>The 0.66–0.89 figure in the second section is a luma-only number.</strong> If your source
+is 4:2:0 — and a JPEG or H.264 file almost certainly is — chroma noise arrives at 0.31–0.76 of the
+source's, depending on where in the pipeline the subsampling happened. The attenuation is larger than
+this page originally claimed, not smaller.</li>
+<li><strong>Denoise chroma before you decide about luma.</strong> At σ 1.0 luma denoise is worth
+nothing and chroma denoise is worth 1.12 dB. If you are going to spend one operation, spend it on the
+plane whose detail is 6% of luma's.</li>
+<li><strong>Chroma wants 2.5–4× the luma radius</strong> at the same output scale, and unlike luma it
+keeps wanting more as the noise rises: 0.8 px at σ 1, 1.6 px at σ 3, 2.0 px at σ 6 on the measured
+crop.</li>
+<li><strong>Do not subsample after the upscale and expect it to clean anything.</strong> A 4:2:0
+conversion on the output side removes 4.3% of the noise amplitude, because the upscale has
+already correlated it: the box returns 0.957 where it returns 0.500 on independent samples. A
+box that returns 0.957 is not a denoiser.</li>
+<li><strong>Subsample in the source, not in the delivery.</strong> The 4:2:0 step is free noise
+removal exactly once, at the point where chroma samples are still independent — before anything has
+interpolated them.</li>
+</ul>
+
 <h2>What I would actually do</h2>
 
 <ol>
@@ -340,12 +652,21 @@ for the blur, at +2.34 more apparent noise.</li>
 <li><strong>Budget the bytes.</strong> Grain at σ 8 costs 2.08×
 the file at q85. If the delivery target has a hard size limit, that is the constraint to design
 against, not the upscale.</li>
+<li><strong>Check the plane before you check the noise level.</strong> The luma series above and the
+chroma series below reach opposite verdicts on the same frame at the same sigma. If the file is
+4:2:0 — <code>identify -verbose</code>, <code>ffprobe</code>, or just assume yes for any JPEG — the
+chroma numbers are the ones that describe what the viewer will see.</li>
+<li><strong>Spend the denoise budget on chroma first.</strong> At σ 1.0 chroma denoise is worth
+1.12 dB and luma denoise is worth nothing at the radius that produced it. Chroma detail is 6% of
+luma's, so blurring it costs almost nothing and removes almost all of the colour mottling.</li>
+<li><strong>Subsample the source, never the output.</strong> The 4:2:0 box is free noise removal once,
+while the chroma samples are still independent. Applied to a 4× upscale instead it returns 0.957 —
+it averages four values the interpolator already made equal.</li>
 </ol>
 
 <h2>Reproducing it</h2>
 
 <pre><code>import numpy as np
-from PIL import Image
 
 def lanczos3(a, out_hw):                      # separable, float64
     oh, ow = out_hw; ih, iw = a.shape
@@ -355,32 +676,36 @@ def lanczos3(a, out_hw):                      # separable, float64
         half = int(np.ceil(3 * st))
         idx = np.floor(pos)[:, None] + np.arange(-half, half + 1)[None, :]
         d = (pos[:, None] - idx) / st
-        w = np.sinc(d) * np.sinc(d / 3.0) * (np.abs(d) < 3)
+        w = np.sinc(d) * np.sinc(d / 3.0) * (np.abs(d) &lt; 3)
         w /= w.sum(axis=1, keepdims=True)
-        return np.clip(idx, 0, n_in - 1), w
-    i1, w1 = wts(iw, ow); tmp = np.einsum("hot,ot->ho", a[:, i1], w1)
-    i2, w2 = wts(ih, oh); return np.einsum("otw,ot->ow", tmp[i2, :], w2)
+        return np.clip(idx, 0, n_in - 1).astype(int), w   # .astype(int) is required
+    i1, w1 = wts(iw, ow); tmp = np.einsum("hot,ot-&gt;ho", a[:, i1], w1)
+    i2, w2 = wts(ih, oh); return np.einsum("otw,ot-&gt;ow", tmp[i2, :], w2)
 
 # 1. exact noise gain: the kernel is linear, so push white noise through it
 rng = np.random.default_rng(0)
 F   = 4
 low = rng.normal(0, 8, (600 // F, 480 // F))
 out = lanczos3(low, (600, 480))
-print(out.std() / low.std())                  # 0.894 -> noise is ATTENUATED
+print(round(out.std() / low.std(), 3))        # 0.894 -&gt; noise is ATTENUATED
 
-# 2. and it is no longer white: measure the blob size instead of the std
+# 2. and it is no longer white: measure the blob size instead of the std.
+# The 0.5 crossing falls between lags, so interpolate -- the integer lag alone reports 3.
 x, var = out - out.mean(), out.var()
+prev = 1.0
 for L in range(1, 40):
     c = ((x[:-L] * x[L:]).mean() + (x[:, :-L] * x[:, L:]).mean()) / 2 / var
     if c &lt; 0.5:
-        print("clump width", L, "px")         # 2.62 px for a 4x Lanczos
+        print("clump width", round(L - 1 + (prev - 0.5) / (prev - c), 2), "px")   # 2.63
         break
+    prev = c
 </code></pre>
 
 <p>Change the kernel to a box and the gain becomes exactly 1.000 — nearest-neighbour copies each
 sample and its noise with it. Change the scale factor and the gain barely moves, which is the point:
 noise transfer is a property of the filter, so it is knowable before you run the job rather than
-after.</p>
+after. The snippet prints 2.63 px on its own 600×480 fixture; the 2.62 px in the clump table is
+the same measurement on the 1920-pixel-wide photo case, and the two agree to 0.4%.</p>
 
 <div class="callout warn">
 <p><strong>Three results that went against what I expected, kept here on purpose.</strong> I expected
@@ -401,13 +726,20 @@ harder to mistake for texture, and the standard remedy for that is applied in th
 <footer>
 <p>Published by <a href="https://upgolab.com">UpgoLAB</a> — AI photo and short-video upscaling in
 the browser. Measured with numpy 1.26.4 and Pillow 12.2.0 on four content-hashed source images at
-2×, 3× and 4×; six experiments, 8 tables, 3 negative results (the noise gain does not scale with
-scale factor, pre-denoise and post-denoise agree to 0.03 dB, and the denoise recommendation
-reverses sign above σ 3) and one instrument caveat reported rather than hidden — the float kernels
-were validated against Pillow before use, with a worst-case single-pixel error of 9.77 levels on
-Lanczos, which affects no reported figure because every figure comes from the float kernels
-themselves. Every number reproducible from the snippet above; no value was adjusted after the
-run.</p>
+2×, 3× and 4×; six experiments on luma and eight more on the 4:2:0 chroma path, 13 tables, and a
+list of results that went against the hypothesis rather than into a drawer: the noise gain does not
+scale with the scale factor, pre-denoise and post-denoise agree to 0.03 dB, the denoise
+recommendation reverses sign above σ 3, a source-side box does not re-amplify through a later
+upscale, and chroma reconstruction on a real encoded texture prefers nearest-neighbour. The float
+kernels were validated against Pillow before use, with a worst-case single-pixel error of 9.77
+levels on Lanczos, which affects no reported figure because every figure comes from the float
+kernels themselves. Two instrument caveats are reported rather than hidden. My first chroma metric,
+a standard deviation of <code>hypot(dCb,dCr)</code>, was wrong by 54% and every chroma number here
+was recomputed after the fix. And my chroma reconstruction result disagrees with the
+chroma-subsampling page in this cluster by 4.8 dB on the same photograph — that page reports bilinear
+ahead, I measure Lanczos ahead — and I could not reproduce their ordering under either ground-truth
+condition I tried. Both are stated below. Every number reproducible from the snippets above; no value
+was adjusted after the run.</p>
 
 <nav class="sisternav" aria-label="More measured upscaling guides">
 <p>More measured guides</p>
