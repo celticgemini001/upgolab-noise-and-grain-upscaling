@@ -497,15 +497,20 @@ wrong-plane blur cannot move it, and costs the image enormously. That is also th
 to test the planes separately rather than sweeping one global strength — a single radius applied to
 both planes is simultaneously a 1.12 dB win and a 6.34 dB loss.</p>
 
-<h3>An honest disagreement with the chroma page in this cluster</h3>
+<h3>Cross-check against the chroma page in this cluster</h3>
 
-<p>The <a href="https://celticgemini001.github.io/upgolab-chroma-subsampling/">chroma subsampling
-measurement</a> reports bilinear as the best kernel for rebuilding 4:2:0 chroma, 0.447 dB ahead of
-Lanczos, explained as a band-limited signal that a sharpening kernel cannot improve. I tried to
-reproduce it and could not. On a synthetic 4:4:4 ground truth the full round trip with no upscale
-gives Lanczos 4.82 dB ahead of bilinear on the same photograph (58.19 vs 53.37 PSNR-C). Put the 2×
-upscale back in and the gap widens to 6.09 dB. Lanczos won all six synthetic-reference comparisons
-across two pipelines and three sources.</p>
+<p>One result here needs putting next to
+<a href="https://celticgemini001.github.io/upgolab-chroma-subsampling/">the chroma subsampling
+measurement</a>, because it looks like a contradiction and is not quite one.</p>
+
+<p>That page's Experiment 3 reported <em>bilinear</em> as the best kernel for rebuilding 4:2:0
+chroma, 0.447 dB ahead of Lanczos, on the reasoning that a band-limited signal cannot be improved by
+a sharpening kernel. Its Experiment 8 then re-ran the sweep across four content classes and found
+bilinear <em>losing every one of them</em>, by up to 3.26 dB on a real photograph, and revised its own
+recommendation to Lanczos. My numbers land on the side of the revision. On a synthetic 4:4:4 ground
+truth the full round trip with no upscale gives Lanczos 4.82 dB ahead of bilinear on the same
+photograph (58.19 vs 53.37 PSNR-C); with the 2× upscale back in, the gap widens to 6.09 dB. Lanczos
+won all six synthetic-reference comparisons across two pipelines and three sources.</p>
 
 <p>The variable that decides it is not the kernel, it is what counts as ground truth:</p>
 
@@ -520,14 +525,20 @@ across two pipelines and three sources.</p>
 </tbody>
 </table>
 
-<p>Spread across four kernels is 6.5–16.9 dB, and the ordering flips between the two ground-truth
-conditions. On a real encoded texture nearest-neighbour beats Lanczos by 7.57 dB, because there is no
-high-frequency chroma left to reconstruct and the sharpening kernels only add ringing where the
-reference has flat blocks. The sister page's −0.447 dB and my +4.82 dB are both smaller than the
-spread and both are reporting which reference they had. What I can state after trying to break my own
-result: the kernel choice is worth a lot more than 0.45 dB, and which kernel wins depends on whether
-your reference contains chroma detail above the box cutoff. Compared against the original file it
-does not; compared against a synthetic 4:4:4 original it does.</p>
+<p>Spread across four kernels is 6.5–16.9 dB, one to two orders of magnitude larger than the 0.447 dB
+the earlier experiment was trying to resolve. And the ordering flips between the two ground-truth
+conditions: on a real encoded texture, nearest-neighbour beats Lanczos by 7.57 dB, because there is
+no high-frequency chroma left to reconstruct and the sharper kernels only add ringing where the
+reference has flat blocks. Which kernel wins depends on whether your reference contains chroma detail
+above the box cutoff. Compared against the original file it does not; compared against a synthetic
+4:4:4 original it does.</p>
+
+<p>Where the two pages agree, and the agreement is the more useful thing: that page measures
+high-frequency chroma energy above half-Nyquist falling from 1.78% of the Cb spectrum to 0.53% through
+a 4:2:0 round trip — 29.7% survives. My box measurement is the same statement from the noise side,
+0.500 of the amplitude surviving the box alone. Both say the chroma above half-Nyquist is gone at
+encode time and no decode-side kernel brings it back. That is exactly why the box at the source cannot
+be re-amplified by a later upscale, which is the 0.3151 / 0.4469 gap I measured above.</p>
 
 <div class="callout warn">
 <p><strong>A metric bug I shipped and then found.</strong> My first pass reported chroma gain as
@@ -735,11 +746,12 @@ kernels were validated against Pillow before use, with a worst-case single-pixel
 levels on Lanczos, which affects no reported figure because every figure comes from the float
 kernels themselves. Two instrument caveats are reported rather than hidden. My first chroma metric,
 a standard deviation of <code>hypot(dCb,dCr)</code>, was wrong by 54% and every chroma number here
-was recomputed after the fix. And my chroma reconstruction result disagrees with the
-chroma-subsampling page in this cluster by 4.8 dB on the same photograph — that page reports bilinear
-ahead, I measure Lanczos ahead — and I could not reproduce their ordering under either ground-truth
-condition I tried. Both are stated below. Every number reproducible from the snippets above; no value
-was adjusted after the run.</p>
+was recomputed after the fix. My chroma reconstruction numbers sit 4.8 dB away from the first
+experiment on the chroma-subsampling page in this cluster, which reported bilinear ahead of Lanczos —
+and alongside that page's own later revision, which reversed the finding to Lanczos after four more
+content classes. Both experiments and the revision are laid out side by side below, together with the
+two ground-truth conditions that decide which ordering you get. Every number reproducible from the
+snippets above; no value was adjusted after the run.</p>
 
 <nav class="sisternav" aria-label="More measured upscaling guides">
 <p>More measured guides</p>
